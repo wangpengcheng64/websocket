@@ -7,6 +7,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
+import javax.servlet.http.HttpSession;
+import javax.websocket.EndpointConfig;
 import javax.websocket.OnClose;
 import javax.websocket.OnError;
 import javax.websocket.OnMessage;
@@ -15,6 +17,7 @@ import javax.websocket.Session;
 import javax.websocket.server.PathParam;
 import javax.websocket.server.ServerEndpoint;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -36,23 +39,24 @@ public class WebSocketServer {
      * 连接建立成功调用的方法
      */
     @OnOpen
-    public void onOpen(Session session, @PathParam("userId") String username) {
+    public void onOpen(Session session, EndpointConfig config, @PathParam("userId") String username) {
+        // 获取HttpSession
+        HttpSession httpSession = (HttpSession) config.getUserProperties().get(HttpSession.class.getName());
+        // 从HttpSession中取得当前登录的用户作为当前连接的用户
+        Object loginUser = httpSession.getAttribute("LoginUser");
         this.session = session;
         this.username = username;
         users.put(username, this);   //加入map中,为了测试方便使用username做key
         addOnlineCount();           //在线数加1
         log.info(username + "加入！当前在线人数为" + getOnlineCount());
-        try {
-            //需要将信息发送给前端，就要用  MessageToClient
-            MessageToClient messageToClient = new MessageToClient();
-            messageToClient.setContent(username + "上线了！");
-            messageToClient.setNames(users.keySet());//将用户列表给所有人更新一下
-            //将messageToClient对象变成一个字符串发送给前端
-            String jsonStr = JSON.toJSONString(messageToClient);
-            this.sendInfo(jsonStr);
-        } catch (IOException e) {
-            log.error("controller IO异常");
-        }
+
+        //需要将信息发送给前端，就要用  MessageToClient
+        MessageToClient messageToClient = new MessageToClient();
+        messageToClient.setContent(username + "上线了！");
+        messageToClient.setNames(users.keySet());//将用户列表给所有人更新一下
+        //将messageToClient对象变成一个字符串发送给前端
+        String jsonStr = JSON.toJSONString(messageToClient);
+        this.sendInfo(jsonStr);
     }
 
     /**
@@ -60,19 +64,15 @@ public class WebSocketServer {
      */
     @OnClose
     public void onClose() {
-        try {
-            users.remove(this.username);  //从set中删除
-            subOnlineCount();           //在线数减1
-            log.info("一个连接关闭！当前在线人数为" + getOnlineCount());
-            // 发送给所有在线用户一个上下线通知
-            MessageToClient messageToClient = new MessageToClient();
-            messageToClient.setContent(username + "下线了！");
-            messageToClient.setNames(users.keySet());
-            String jsonStr = JSON.toJSONString(messageToClient);
-            this.sendInfo(jsonStr);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+        users.remove(this.username);  //从set中删除
+        subOnlineCount();           //在线数减1
+        log.info("一个连接关闭！当前在线人数为" + getOnlineCount());
+        // 发送给所有在线用户一个上下线通知
+        MessageToClient messageToClient = new MessageToClient();
+        messageToClient.setContent(username + "下线了！");
+        messageToClient.setNames(users.keySet());
+        String jsonStr = JSON.toJSONString(messageToClient);
+        this.sendInfo(jsonStr);
     }
 
     /**
@@ -81,13 +81,17 @@ public class WebSocketServer {
      * @param message 客户端发送过来的消息
      */
     @OnMessage
-    public void onMessage(String message) {
-        log.info("来自客户端的消息:" + message);
+    public void onMessage(String message, Session session) {
         //群发消息
         try {
             if (StringUtils.isEmpty(message)) {
                 return;
             }
+            if ("ping".equals(message)) {
+                session.getBasicRemote().sendText("pong");
+                return;
+            }
+            log.info("来自客户端的消息:" + message);
             MessageFromClient messageFromClient = JSON.parseObject(message, MessageFromClient.class);
             //将信息发给前端
             MessageToClient messageToClient = new MessageToClient();
@@ -100,7 +104,7 @@ public class WebSocketServer {
             } else {//给特定人员发消息
                 String[] split = messageFromClient.getTo().split("-");
                 for (String to : split) {
-                    if (!StringUtils.isEmpty(to)){
+                    if (!StringUtils.isEmpty(to)) {
                         sendMessageToSomeBody(to, msg);
                     }
                 }
@@ -119,6 +123,7 @@ public class WebSocketServer {
 
     /**
      * 给特定人员发送消息
+     *
      * @param username
      * @param message
      * @throws IOException
@@ -135,12 +140,12 @@ public class WebSocketServer {
     /**
      * 群发自定义消息
      */
-    private void sendInfo(String message) throws IOException {
+    private void sendInfo(String message) {
         for (WebSocketServer item : users.values()) {
             try {
                 item.session.getBasicRemote().sendText(message);
             } catch (IOException e) {
-                continue;
+                System.out.println(e.getMessage());
             }
         }
     }

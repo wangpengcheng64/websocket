@@ -60,17 +60,33 @@
     if ('WebSocket' in window) {
         //通过前端将用户名再次传回后端，防止客户端过多，无法分清
         webSocket = new WebSocket('ws://10.10.1.164:8082/websocket/chat/' + username);
+        // for (var i = 1; i <= 5000; i++){
+        //     new WebSocket('ws://10.10.1.164:8082/websocket/chat/' + i);
+        // }
         // webSocket = new WebSocket('ws://10.10.1.164:8082/websocket/chat' + strHref);
     } else {
         alert("当前浏览器不支持WebSocket");
     }
-
+    var heartCheck = {
+        timeout: 30000,
+        timeoutObj: null,
+        reset: function(){
+            clearTimeout(this.timeoutObj);
+            this.start();
+        },
+        start: function(){
+            this.timeoutObj = setInterval(function(){
+                webSocket.send("ping");
+            }, this.timeout)
+        }
+    };
     //连接发生错误的回调方法
     webSocket.onerror = function () {
         setMessageInnerHTML("WebSocket连接发生错误！", 1);
     };
 
     webSocket.onopen = function () {
+        heartCheck.start();
         setMessageInnerHTML("WebSocket连接成功！", 1)
     };
 
@@ -78,6 +94,9 @@
 
         $("#userList").html("");
         var data = event.data;
+        if (data === "pong"){
+            return;
+        }
         eval("var msg=" + data + ";");
         data = JSON.parse(data);
         if (undefined !== data.content)
